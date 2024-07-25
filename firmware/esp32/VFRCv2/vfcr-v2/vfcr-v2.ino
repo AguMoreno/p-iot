@@ -21,19 +21,21 @@ RCSwitch mySwitch = RCSwitch();
 
 #define DEBUG true  // Set to true to enable debug prints, false to disable
 
-// RF signals configuration
+/*// RF signals configuration
 #define SIGNAL_A 753832
 #define SIGNAL_B 753828
 #define SIGNAL_C 753826
-#define SIGNAL_D 753825
+#define SIGNAL_D 753825*/
 
-// Variables for debounce and long press detection
-unsigned long lastSignalTime = 0;
+// RF signals configuration 28bits
+#define SIGNAL_A 182097013
+#define SIGNAL_B 182096997
+#define SIGNAL_C 182096981
+#define SIGNAL_D 174658677
+
+// Variables for long press detection
 unsigned long signalDStartTime = 0;
-const unsigned long debounceDelay = 150;  // 0.15 seconds debounce
 const unsigned long longPressDelay = 10000;  // 10 seconds long press for reset
-
-Ticker rfCheckTicker;  // Ticker for checking RF signals
 
 void setupWiFi() {
   if (DEBUG) {
@@ -123,6 +125,14 @@ void handleAction(const String &action) {
   } else {
     Serial.println("Unknown action received");
   }
+
+  // Blink the LED twice
+  for (int i = 0; i < 2; i++) {
+    digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
+    delay(50);  // Wait for 50 milliseconds
+    digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
+    delay(50);  // Wait for 50 milliseconds
+  }
 }
 
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
@@ -132,13 +142,6 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
     Serial.print("]: ");
     Serial.write(payload, len);
     Serial.println();
-  }
-    // Blink the LED twice
-  for (int i = 0; i < 2; i++) {
-    digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-    delay(400);  // Wait for 150 milliseconds
-    digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-    delay(450);  // Wait for 150 milliseconds
   }
 
   // Convert payload to string
@@ -204,60 +207,28 @@ void checkRFSignal() {
         Serial.println(mySwitch.getReceivedProtocol());
       }
 
-      unsigned long currentMillis = millis();
-
       // Check for signal A
-      if (receivedValue == SIGNAL_A && (currentMillis - lastSignalTime > debounceDelay)) {
+      if (receivedValue == SIGNAL_A) {
         handleAction("A");
-        lastSignalTime = currentMillis;
-        // Blink the LED twice
-        for (int i = 0; i < 2; i++) {
-          digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-          delay(250);  // Wait for 150 milliseconds
-          digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-          delay(250);  // Wait for 150 milliseconds
-        }
       }
 
       // Check for signal B
-      if (receivedValue == SIGNAL_B && (currentMillis - lastSignalTime > debounceDelay)) {
+      if (receivedValue == SIGNAL_B) {
         handleAction("B");
-        lastSignalTime = currentMillis;
-        // Blink the LED twice
-        for (int i = 0; i < 2; i++) {
-          digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-          delay(250);  // Wait for 150 milliseconds
-          digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-          delay(250);  // Wait for 150 milliseconds
-        }
       }
 
       // Check for signal C
-      if (receivedValue == SIGNAL_C && (currentMillis - lastSignalTime > debounceDelay)) {
+      if (receivedValue == SIGNAL_C) {
         handleAction("Undo");
-        lastSignalTime = currentMillis;
-        // Blink the LED twice
-        for (int i = 0; i < 2; i++) {
-          digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-          delay(250);  // Wait for 150 milliseconds
-          digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-          delay(250);  // Wait for 150 milliseconds
-        }
       }
 
       // Check for signal D (long press for reset)
       if (receivedValue == SIGNAL_D) {
+        unsigned long currentMillis = millis();
         if (signalDStartTime == 0) {
           signalDStartTime = currentMillis;
         } else if (currentMillis - signalDStartTime >= longPressDelay) {
           handleAction("Reset");
-          // Blink the LED twice
-          for (int i = 0; i < 2; i++) {
-            digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-            delay(250);  // Wait for 150 milliseconds
-            digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-            delay(250);  // Wait for 150 milliseconds
-          }
           signalDStartTime = 0;
         }
       } else {
@@ -289,14 +260,11 @@ void setup() {
   // Initialize RF receiver
   mySwitch.enableReceive(14);  // Receiver on interrupt pin 14
 
-  // Set up ticker to check RF signals periodically
-  rfCheckTicker.attach_ms(100, checkRFSignal);  // Check RF signals every 100 ms
-
   if (DEBUG) {
     Serial.println("Setup complete. Waiting for MQTT messages...");
   }
 }
 
 void loop() {
-  // No need to use loop() with AsyncMqttClient and Ticker
+  checkRFSignal();  // Check RF signals continuously in the loop
 }

@@ -4,6 +4,9 @@
 #include <AsyncTCP.h>
 #include <ArduinoJson.h>
 #include <RCSwitch.h>
+#include <vector>
+
+using namespace std;
 
 // WiFi configuration
 const char* ssid = "ApMoreno";
@@ -27,13 +30,70 @@ RCSwitch mySwitch = RCSwitch();
 #define SIGNAL_C 753826
 #define SIGNAL_D 753825
 
-// Variables for debounce and long press detection
-unsigned long lastSignalTime = 0;
+// Pin definitions
+#define PIN_A 33
+#define PIN_B 32
+#define PIN_UNDO 35
+#define PIN_RESET 34
+
+// Flags for interrupt handling
+volatile bool flagA = false;
+volatile bool flagB = false;
+volatile bool flagUndo = false;
+volatile bool flagReset = false;
+
+// Variables for debounce
+volatile unsigned long lastInterruptTimeA = 0;
+volatile unsigned long lastInterruptTimeB = 0;
+volatile unsigned long lastInterruptTimeUndo = 0;
+volatile unsigned long lastInterruptTimeReset = 0;
+const unsigned long debounceDelay = 200;  // 200 ms debounce delay
+
+vector<String> messageQueue;
+
 unsigned long signalDStartTime = 0;
-const unsigned long debounceDelay = 150;  // 0.15 seconds debounce
 const unsigned long longPressDelay = 10000;  // 10 seconds long press for reset
 
 Ticker rfCheckTicker;  // Ticker for checking RF signals
+
+void IRAM_ATTR handleInterruptA() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastInterruptTimeA > debounceDelay) {
+    flagA = true;
+    lastInterruptTimeA = currentTime;
+  }
+}
+
+void IRAM_ATTR handleInterruptB() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastInterruptTimeB > debounceDelay) {
+    flagB = true;
+    lastInterruptTimeB = currentTime;
+  }
+}
+
+void IRAM_ATTR handleInterruptUndo() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastInterruptTimeUndo > debounceDelay) {
+    flagUndo = true;
+    lastInterruptTimeUndo = currentTime;
+  }
+}
+
+void IRAM_ATTR handleInterruptReset() {
+  unsigned long currentTime = millis();
+  if (digitalRead(PIN_RESET) == LOW) {
+    if (signalDStartTime == 0) {
+      signalDStartTime = currentTime;
+    } else if (currentTime - signalDStartTime >= longPressDelay) {
+      flagReset = true;
+      signalDStartTime = 0;
+    }
+  } else {
+    signalDStartTime = 0;  // Reset the timer if signal D is not detected
+  }
+  lastInterruptTimeReset = currentTime;
+}
 
 void setupWiFi() {
   if (DEBUG) {
@@ -70,6 +130,13 @@ void onMqttConnect(bool sessionPresent) {
   if (DEBUG) {
     Serial.print("Publishing test message, packetId: ");
     Serial.println(packetIdPub);
+  }
+
+  // Try to publish any stored messages
+  while (!messageQueue.empty()) {
+    String msg = messageQueue.front();
+    mqttClient.publish(publish_topic, 2, true, msg.c_str());
+    messageQueue.erase(messageQueue.begin());
   }
 }
 
@@ -109,19 +176,47 @@ void handleAction(const String &action) {
   const char* msgReset = "{\"action\": \"Reset\"}";
 
   if (action == "A") {
-    mqttClient.publish(topicPointA, 2, true, msgPointA);
-    Serial.printf("Message sent to %s: %s\n", topicPointA, msgPointA);
+    if (mqttClient.connected()) {
+      mqttClient.publish(topicPointA, 2, true, msgPointA);
+      Serial.printf("Message sent to %s: %s\n", topicPointA, msgPointA);
+    } else {
+      messageQueue.push_back(String(msgPointA));
+      Serial.println("Stored message for later sending.");
+    }
   } else if (action == "B") {
-    mqttClient.publish(topicPointB, 2, true, msgPointB);
-    Serial.printf("Message sent to %s: %s\n", topicPointB, msgPointB);
+    if (mqttClient.connected()) {
+      mqttClient.publish(topicPointB, 2, true, msgPointB);
+      Serial.printf("Message sent to %s: %s\n", topicPointB, msgPointB);
+    } else {
+      messageQueue.push_back(String(msgPointB));
+      Serial.println("Stored message for later sending.");
+    }
   } else if (action == "Undo") {
-    mqttClient.publish(topicUndo, 2, true, msgUndo);
-    Serial.printf("Message sent to %s: %s\n", topicUndo, msgUndo);
+    if (mqttClient.connected()) {
+      mqttClient.publish(topicUndo, 2, true, msgUndo);
+      Serial.printf("Message sent to %s: %s\n", topicUndo, msgUndo);
+    } else {
+      messageQueue.push_back(String(msgUndo));
+      Serial.println("Stored message for later sending.");
+    }
   } else if (action == "Reset") {
-    mqttClient.publish(topicReset, 2, true, msgReset);
-    Serial.printf("Message sent to %s: %s\n", topicReset, msgReset);
+    if (mqttClient.connected()) {
+      mqttClient.publish(topicReset, 2, true, msgReset);
+      Serial.printf("Message sent to %s: %s\n", topicReset, msgReset);
+    } else {
+      messageQueue.push_back(String(msgReset));
+      Serial.println("Stored message for later sending.");
+    }
   } else {
     Serial.println("Unknown action received");
+  }
+
+  // Blink the LED twice
+  for (int i = 0; i < 2; i++) {
+    digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
+    delay(50);  // Wait for 50 milliseconds
+    digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
+    delay(50);  // Wait for 50 milliseconds
   }
 }
 
@@ -132,13 +227,6 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
     Serial.print("]: ");
     Serial.write(payload, len);
     Serial.println();
-  }
-    // Blink the LED twice
-  for (int i = 0; i < 2; i++) {
-    digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-    delay(400);  // Wait for 150 milliseconds
-    digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-    delay(450);  // Wait for 150 milliseconds
   }
 
   // Convert payload to string
@@ -204,64 +292,14 @@ void checkRFSignal() {
         Serial.println(mySwitch.getReceivedProtocol());
       }
 
-      unsigned long currentMillis = millis();
-
-      // Check for signal A
-      if (receivedValue == SIGNAL_A && (currentMillis - lastSignalTime > debounceDelay)) {
-        handleAction("A");
-        lastSignalTime = currentMillis;
-        // Blink the LED twice
-        for (int i = 0; i < 2; i++) {
-          digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-          delay(250);  // Wait for 150 milliseconds
-          digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-          delay(250);  // Wait for 150 milliseconds
-        }
-      }
-
-      // Check for signal B
-      if (receivedValue == SIGNAL_B && (currentMillis - lastSignalTime > debounceDelay)) {
-        handleAction("B");
-        lastSignalTime = currentMillis;
-        // Blink the LED twice
-        for (int i = 0; i < 2; i++) {
-          digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-          delay(250);  // Wait for 150 milliseconds
-          digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-          delay(250);  // Wait for 150 milliseconds
-        }
-      }
-
-      // Check for signal C
-      if (receivedValue == SIGNAL_C && (currentMillis - lastSignalTime > debounceDelay)) {
-        handleAction("Undo");
-        lastSignalTime = currentMillis;
-        // Blink the LED twice
-        for (int i = 0; i < 2; i++) {
-          digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-          delay(250);  // Wait for 150 milliseconds
-          digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-          delay(250);  // Wait for 150 milliseconds
-        }
-      }
-
-      // Check for signal D (long press for reset)
-      if (receivedValue == SIGNAL_D) {
-        if (signalDStartTime == 0) {
-          signalDStartTime = currentMillis;
-        } else if (currentMillis - signalDStartTime >= longPressDelay) {
-          handleAction("Reset");
-          // Blink the LED twice
-          for (int i = 0; i < 2; i++) {
-            digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED on
-            delay(250);  // Wait for 150 milliseconds
-            digitalWrite(LED_BUILTIN, LOW);  // Turn the LED off
-            delay(250);  // Wait for 150 milliseconds
-          }
-          signalDStartTime = 0;
-        }
-      } else {
-        signalDStartTime = 0;  // Reset the timer if signal D is not detected
+      if (receivedValue == SIGNAL_A) {
+        flagA = true;
+      } else if (receivedValue == SIGNAL_B) {
+        flagB = true;
+      } else if (receivedValue == SIGNAL_C) {
+        flagUndo = true;
+      } else if (receivedValue == SIGNAL_D) {
+        flagReset = true;
       }
     }
     mySwitch.resetAvailable();
@@ -289,8 +327,16 @@ void setup() {
   // Initialize RF receiver
   mySwitch.enableReceive(14);  // Receiver on interrupt pin 14
 
-  // Set up ticker to check RF signals periodically
-  rfCheckTicker.attach_ms(100, checkRFSignal);  // Check RF signals every 100 ms
+  // Set up pin modes and attach interrupts
+  pinMode(PIN_A, INPUT_PULLUP);
+  pinMode(PIN_B, INPUT_PULLUP);
+  pinMode(PIN_UNDO, INPUT_PULLUP);
+  pinMode(PIN_RESET, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(PIN_A), handleInterruptA, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIN_B), handleInterruptB, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIN_UNDO), handleInterruptUndo, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIN_RESET), handleInterruptReset, FALLING);
 
   if (DEBUG) {
     Serial.println("Setup complete. Waiting for MQTT messages...");
@@ -298,5 +344,25 @@ void setup() {
 }
 
 void loop() {
-  // No need to use loop() with AsyncMqttClient and Ticker
+  checkRFSignal();  // Check RF signals continuously in the loop
+
+  if (flagA) {
+    flagA = false;
+    handleAction("A");
+  }
+
+  if (flagB) {
+    flagB = false;
+    handleAction("B");
+  }
+
+  if (flagUndo) {
+    flagUndo = false;
+    handleAction("Undo");
+  }
+
+  if (flagReset) {
+    flagReset = false;
+    handleAction("Reset");
+  }
 }
