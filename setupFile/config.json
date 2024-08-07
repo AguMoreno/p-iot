@@ -1,0 +1,22 @@
+{
+    "deviceID": "9822EF97B443", //MAC Address
+    "deviceType": "RPI" , // RPI | PC | ESP32 | Generic | Other
+    "club": "CB-Padel",
+    "city": "Curitiba",
+    "court": "4",
+    "network": [{"ssid": "PadelClubWifi", "pass": "securePassword"}],
+    "endpoint": "https://localhost/home",
+    "advertising": "https://advertising.com/clube",
+    "version" : "1.0.0",
+    "defaultMode":"A",
+    "periferics" :{
+        "movementsSensor" : true,
+        "camera": false,
+        "buttons":true
+    },
+    "functions":{
+        "streaming": false,
+        "tournament":true,
+        "advertising": true
+    }
+}

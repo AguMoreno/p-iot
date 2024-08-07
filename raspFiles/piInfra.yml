@@ -34,6 +34,12 @@ services:
       - "1880:1880"
     volumes:
       - nodered-data:/data
+    privileged: true
+    devices:
+      - /dev/mem:/dev/mem
+      - /dev/gpiomem:/dev/gpiomem
+    environment:
+      - TZ=Etc/UTC
 
 volumes:
   influxdb-data:
@@ -43,3 +49,4 @@ volumes:
 networks:
   default:
     driver: bridge
+

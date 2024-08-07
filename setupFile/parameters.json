@@ -1,0 +1,21 @@
+{
+    "tournamentID":"null",
+    "tournamentStatus":"inProgress",
+    "matchID":"matchID",
+    "matchStatus":"inProgress",
+    "players":{
+        "teamA":{
+            "player1":"name1",
+            "player2":"name2"
+        },
+        "teamB":{        
+            "player3":"name3",
+            "player4":"name4"
+        }
+    },
+    "adData":"dataAdvertising",
+    "environment":{
+        "temperature":"23",
+        "humidity": "29%"
+    }
+}
